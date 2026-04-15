@@ -26,29 +26,28 @@ $color = $colores[$tipo] ?? $colores['teoria'];
 $es_ejercicio = ($tipo === 'ejercicio');
 
 if ($es_ejercicio) {
-    // Para ejercicios: mostrar codigo fuente parseado como instrucciones
     $source = file_get_contents($archivo);
-    // Quitar la etiqueta de apertura PHP
     $source = preg_replace('/^<\?php\s*/', '', $source);
 } else {
-    // Para teoria y solucion: ejecutar y mostrar salida
     ob_start();
     include $archivo;
     $output = ob_get_clean();
 }
 
 /**
- * Parsea el codigo fuente de un ejercicio y lo convierte en HTML bonito.
+ * Parsea ejercicios con editores interactivos.
  */
 function parseExerciseSource(string $source): string {
     $lines = explode("\n", $source);
     $html = '';
     $in_block_comment = false;
+    $editor_id = 0;
+    $context_lines = []; // Lineas de contexto PHP antes del editor
 
     foreach ($lines as $line) {
         $trimmed = trim($line);
 
-        // Bloque de comentario docblock
+        // Bloque docblock
         if (str_starts_with($trimmed, '/**') || str_starts_with($trimmed, '/*')) {
             $in_block_comment = true;
         }
@@ -56,7 +55,6 @@ function parseExerciseSource(string $source): string {
             if (str_contains($trimmed, '*/')) {
                 $in_block_comment = false;
             }
-            // Extraer el texto del comentario de bloque
             $text = preg_replace('/^\s*\/?\*+\/?\s?/', '', $line);
             $text = trim($text);
             if (preg_match('/^=+$/', $text) || empty($text)) continue;
@@ -68,28 +66,24 @@ function parseExerciseSource(string $source): string {
             continue;
         }
 
-        // Linea vacia
         if (empty($trimmed)) {
             $html .= '<div class="ex-spacer"></div>';
             continue;
         }
 
-        // Separador visual -------
         if (preg_match('/^\/\/\s*-{5,}/', $trimmed)) {
             $html .= '<div class="ex-divider"></div>';
             continue;
         }
 
-        // Titulo de ejercicio: // EJERCICIO 1: ...
         if (preg_match('/^\/\/\s*(EJERCICIO\s+\d+.*)/i', $trimmed, $m)) {
             $html .= '<div class="ex-title">' . htmlspecialchars(trim($m[1])) . '</div>';
+            $context_lines = [];
             continue;
         }
 
-        // Instruccion (comentario //)
         if (preg_match('/^\/\/\s?(.*)$/', $trimmed, $m)) {
             $text = $m[1];
-            // Resaltar pistas
             if (preg_match('/^(Pista|Formato|Ejemplo|Nota|Muestra|Prueba|Operaciones)/i', trim($text))) {
                 $html .= '<div class="ex-hint">' . htmlspecialchars($text) . '</div>';
             } else {
@@ -98,14 +92,33 @@ function parseExerciseSource(string $source): string {
             continue;
         }
 
-        // TU CODIGO AQUI
+        // TU CODIGO AQUI -> editor interactivo
         if (str_contains($trimmed, 'TU CODIGO AQUI')) {
-            $html .= '<div class="ex-placeholder">// Escribe tu codigo aqui</div>';
+            $editor_id++;
+            $ctx = !empty($context_lines) ? htmlspecialchars(implode("\n", $context_lines)) : '';
+            $html .= '<div class="editor-block" id="editor-block-' . $editor_id . '">';
+            if (!empty($ctx)) {
+                $html .= '<div class="editor-context"><pre>' . $ctx . '</pre></div>';
+            }
+            $html .= '<div class="editor-wrap">';
+            $html .= '<textarea class="code-editor" id="editor-' . $editor_id . '" placeholder="Escribe tu codigo PHP aqui..." spellcheck="false"></textarea>';
+            $html .= '<div class="editor-actions">';
+            $html .= '<button class="btn-run" onclick="ejecutarCodigo(' . $editor_id . ')"><span class="btn-icon">&#9654;</span> Ejecutar</button>';
+            $html .= '<button class="btn-clear" onclick="limpiar(' . $editor_id . ')">Limpiar</button>';
+            $html .= '</div>';
+            $html .= '</div>';
+            $html .= '<div class="output-panel" id="output-' . $editor_id . '" style="display:none">';
+            $html .= '<div class="output-panel-bar">Resultado</div>';
+            $html .= '<pre class="output-panel-content" id="output-content-' . $editor_id . '"></pre>';
+            $html .= '</div>';
+            $html .= '</div>';
+            $context_lines = [];
             continue;
         }
 
-        // Codigo echo o PHP real (no es comentario)
+        // Codigo PHP real (echo, variables, etc.)
         if (!empty($trimmed)) {
+            $context_lines[] = $line;
             $html .= '<div class="ex-code">' . htmlspecialchars($line) . '</div>';
             continue;
         }
@@ -114,9 +127,6 @@ function parseExerciseSource(string $source): string {
     return $html;
 }
 
-/**
- * Parsea la salida de teoria/solucion para formatear secciones.
- */
 function parseOutput(string $output): string {
     $lines = explode("\n", htmlspecialchars($output));
     $formatted = [];
@@ -145,218 +155,160 @@ function parseOutput(string $output): string {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #fafafa;
-            --surface: #ffffff;
-            --border: #e5e5e5;
-            --text: #171717;
-            --text-secondary: #737373;
-            --radius: 12px;
+            --bg: #fafafa; --surface: #ffffff; --border: #e5e5e5;
+            --text: #171717; --text-secondary: #737373; --radius: 12px;
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
 
-        body {
-            font-family: 'Inter', -apple-system, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .topbar {
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-            padding: 0.85rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-
+        .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.85rem 2rem; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
         .topbar-left { display: flex; align-items: center; gap: 1rem; }
-
-        .topbar a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-size: 0.85rem;
-            font-weight: 500;
-            transition: color 0.15s;
-        }
-
+        .topbar a { color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.15s; }
         .topbar a:hover { color: var(--text); }
         .topbar-title { font-size: 0.85rem; font-weight: 600; color: var(--text); }
-
-        .topbar-badge {
-            font-size: 0.72rem;
-            font-weight: 600;
-            padding: 0.3rem 0.75rem;
-            border-radius: 100px;
-            letter-spacing: 0.02em;
-        }
+        .topbar-badge { font-size: 0.72rem; font-weight: 600; padding: 0.3rem 0.75rem; border-radius: 100px; letter-spacing: 0.02em; }
 
         .content-wrap { max-width: 800px; margin: 2rem auto; padding: 0 1.5rem 4rem; }
-
         .lesson-header { margin-bottom: 2rem; }
         .lesson-num { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
         .lesson-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 
-        .output-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow: hidden;
-        }
-
-        .output-bar {
-            background: #f5f5f5;
-            border-bottom: 1px solid var(--border);
-            padding: 0.6rem 1.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
+        .output-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+        .output-bar { background: #f5f5f5; border-bottom: 1px solid var(--border); padding: 0.6rem 1.25rem; display: flex; align-items: center; gap: 0.5rem; }
         .output-bar .dot { width: 10px; height: 10px; border-radius: 50%; }
-        .dot-red { background: #ef4444; }
-        .dot-yellow { background: #f59e0b; }
-        .dot-green { background: #22c55e; }
-
-        .output-bar span {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-left: 0.5rem;
-        }
+        .dot-red { background: #ef4444; } .dot-yellow { background: #f59e0b; } .dot-green { background: #22c55e; }
+        .output-bar span { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary); margin-left: 0.5rem; }
 
         .output-body { padding: 1.5rem; overflow-x: auto; }
-
-        .output-body pre {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            line-height: 1.8;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            color: #374151;
-        }
-
-        .section-title {
-            display: block; font-weight: 700; font-size: 0.95rem; color: #111;
-            margin-top: 1.25rem; margin-bottom: 0.25rem;
-            padding-bottom: 0.4rem; border-bottom: 2px solid #e5e5e5;
-        }
-
+        .output-body pre { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.8; white-space: pre-wrap; word-wrap: break-word; color: #374151; }
+        .section-title { display: block; font-weight: 700; font-size: 0.95rem; color: #111; margin-top: 1.25rem; margin-bottom: 0.25rem; padding-bottom: 0.4rem; border-bottom: 2px solid #e5e5e5; }
         .subsection { display: block; font-weight: 600; color: #2563eb; margin-top: 0.75rem; }
         .separator { display: block; height: 1px; background: #e5e5e5; margin: 0.5rem 0; }
 
-        /* === Estilos para ejercicios === */
+        /* Ejercicios */
         .exercise-content { padding: 1.5rem; }
-
-        .ex-main-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #111;
-            margin-bottom: 0.5rem;
-        }
-
-        .ex-desc {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.15rem;
-        }
-
-        .ex-divider {
-            height: 1px;
-            background: linear-gradient(to right, var(--border), transparent);
-            margin: 1.5rem 0 1rem;
-        }
-
-        .ex-title {
-            font-family: 'Inter', sans-serif;
-            font-size: 1rem;
-            font-weight: 700;
-            color: #16a34a;
-            margin-bottom: 0.75rem;
-            padding: 0.5rem 0.75rem;
-            background: #f0fdf4;
-            border-left: 3px solid #16a34a;
-            border-radius: 0 6px 6px 0;
-        }
-
-        .ex-instruction {
-            font-size: 0.9rem;
-            color: #374151;
-            line-height: 1.7;
-            padding-left: 0.75rem;
-        }
-
-        .ex-hint {
-            font-size: 0.85rem;
-            color: #7c3aed;
-            font-style: italic;
-            padding-left: 0.75rem;
-            margin-top: 0.25rem;
-        }
-
-        .ex-placeholder {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            color: #9ca3af;
-            background: #f9fafb;
-            border: 2px dashed #d1d5db;
-            border-radius: 8px;
-            padding: 1.25rem;
-            margin: 0.75rem 0;
-            text-align: center;
-        }
-
-        .ex-code {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.82rem;
-            color: #6b7280;
-            background: #f9fafb;
-            padding: 0.15rem 0.5rem;
-            border-radius: 4px;
-            margin: 0.1rem 0;
-        }
-
+        .ex-main-title { font-size: 1.1rem; font-weight: 700; color: #111; margin-bottom: 0.5rem; }
+        .ex-desc { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.15rem; }
+        .ex-divider { height: 1px; background: linear-gradient(to right, var(--border), transparent); margin: 1.5rem 0 1rem; }
+        .ex-title { font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700; color: #16a34a; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: #f0fdf4; border-left: 3px solid #16a34a; border-radius: 0 6px 6px 0; }
+        .ex-instruction { font-size: 0.9rem; color: #374151; line-height: 1.7; padding-left: 0.75rem; }
+        .ex-hint { font-size: 0.85rem; color: #7c3aed; font-style: italic; padding-left: 0.75rem; margin-top: 0.25rem; }
+        .ex-code { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; color: #6b7280; background: #f9fafb; padding: 0.15rem 0.5rem; border-radius: 4px; margin: 0.1rem 0; }
         .ex-spacer { height: 0.4rem; }
 
-        .cli-tip {
-            margin-top: 1.5rem;
-            padding: 1rem 1.25rem;
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            border-radius: var(--radius);
-            font-size: 0.85rem;
-            color: #92400e;
-            line-height: 1.6;
-        }
+        /* Editor interactivo */
+        .editor-block { margin: 1rem 0 1.5rem; }
 
-        .cli-tip strong { color: #78350f; }
-        .cli-tip code {
+        .editor-context {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-radius: var(--radius) var(--radius) 0 0;
+            padding: 0.6rem 0.85rem;
+        }
+        .editor-context pre {
             font-family: 'JetBrains Mono', monospace;
-            background: #fef3c7;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
             font-size: 0.8rem;
+            color: #9ca3af;
+            margin: 0;
+            white-space: pre-wrap;
         }
 
-        .nav-bottom {
+        .editor-wrap {
+            border: 2px solid #d1d5db;
+            border-radius: var(--radius);
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        .editor-wrap:focus-within { border-color: #3b82f6; }
+        .editor-context + .editor-wrap { border-radius: 0 0 var(--radius) var(--radius); }
+
+        .code-editor {
+            width: 100%;
+            min-height: 120px;
+            padding: 1rem;
+            border: none;
+            outline: none;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.88rem;
+            line-height: 1.7;
+            resize: vertical;
+            background: #fefefe;
+            color: var(--text);
+            tab-size: 4;
+        }
+
+        .editor-actions {
             display: flex;
-            justify-content: space-between;
-            margin-top: 1.5rem;
-            gap: 1rem;
+            gap: 0.5rem;
+            padding: 0.6rem 0.85rem;
+            background: #f9fafb;
+            border-top: 1px solid #e5e7eb;
         }
 
-        .nav-bottom a {
+        .btn-run {
             display: inline-flex; align-items: center; gap: 0.4rem;
-            text-decoration: none; font-size: 0.85rem; font-weight: 500;
-            color: var(--text-secondary);
-            padding: 0.6rem 1rem; border: 1px solid var(--border);
-            border-radius: 8px; background: var(--surface); transition: all 0.15s;
+            padding: 0.5rem 1.25rem;
+            background: #16a34a; color: white;
+            border: none; border-radius: 8px;
+            font-family: 'Inter', sans-serif; font-size: 0.82rem; font-weight: 600;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .btn-run:hover { background: #15803d; }
+        .btn-run:disabled { background: #9ca3af; cursor: not-allowed; }
+        .btn-run .btn-icon { font-size: 0.7rem; }
+
+        .btn-clear {
+            padding: 0.5rem 1rem;
+            background: transparent; color: var(--text-secondary);
+            border: 1px solid var(--border); border-radius: 8px;
+            font-family: 'Inter', sans-serif; font-size: 0.82rem; font-weight: 500;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .btn-clear:hover { color: var(--text); border-color: #d4d4d4; }
+
+        .output-panel {
+            margin-top: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            animation: fadeIn 0.2s ease;
         }
 
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+        .output-panel-bar {
+            background: #1e293b;
+            color: #94a3b8;
+            padding: 0.45rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .output-panel-content {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin: 0;
+            min-height: 2rem;
+        }
+
+        .output-panel-content.error { color: #fca5a5; }
+        .output-panel-content.success { color: #86efac; }
+
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .nav-bottom { display: flex; justify-content: space-between; margin-top: 1.5rem; gap: 1rem; }
+        .nav-bottom a { display: inline-flex; align-items: center; gap: 0.4rem; text-decoration: none; font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); transition: all 0.15s; }
         .nav-bottom a:hover { color: var(--text); border-color: #d4d4d4; }
 
         @media (max-width: 640px) {
@@ -364,7 +316,7 @@ function parseOutput(string $output): string {
             .content-wrap { padding: 0 1rem 3rem; }
             .lesson-title { font-size: 1.2rem; }
             .output-body, .exercise-content { padding: 1rem; }
-            .output-body pre { font-size: 0.8rem; }
+            .code-editor { font-size: 0.82rem; min-height: 100px; }
         }
     </style>
 </head>
@@ -402,15 +354,6 @@ function parseOutput(string $output): string {
             <?php endif; ?>
         </div>
 
-        <?php if ($es_ejercicio): ?>
-            <div class="cli-tip">
-                <strong>Para hacer este ejercicio:</strong><br>
-                1. Abre el archivo en tu editor: <code><?= htmlspecialchars($archivo) ?></code><br>
-                2. Completa el codigo donde dice <code>// TU CODIGO AQUI</code><br>
-                3. Ejecuta: <code>php <?= htmlspecialchars($archivo) ?></code>
-            </div>
-        <?php endif; ?>
-
         <div class="nav-bottom">
             <?php
             $dir = dirname($archivo);
@@ -430,5 +373,81 @@ function parseOutput(string $output): string {
             </div>
         </div>
     </div>
+
+    <?php if ($es_ejercicio): ?>
+    <script>
+    async function ejecutarCodigo(id) {
+        const editor = document.getElementById('editor-' + id);
+        const outputPanel = document.getElementById('output-' + id);
+        const outputContent = document.getElementById('output-content-' + id);
+        const btn = editor.closest('.editor-block').querySelector('.btn-run');
+        const code = editor.value.trim();
+
+        if (!code) {
+            outputPanel.style.display = 'block';
+            outputContent.textContent = 'Escribe algo de codigo primero.';
+            outputContent.className = 'output-panel-content error';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Ejecutando...';
+        outputPanel.style.display = 'block';
+        outputContent.textContent = 'Ejecutando...';
+        outputContent.className = 'output-panel-content';
+
+        try {
+            const resp = await fetch('/ejecutar.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code })
+            });
+            const data = await resp.json();
+
+            if (data.output && data.output.trim()) {
+                outputContent.textContent = data.output;
+                outputContent.className = 'output-panel-content ' + (data.success ? 'success' : 'error');
+            } else if (!data.success) {
+                outputContent.textContent = data.error || 'Error al ejecutar el codigo.';
+                outputContent.className = 'output-panel-content error';
+            } else {
+                outputContent.textContent = '(sin salida)';
+                outputContent.className = 'output-panel-content';
+            }
+        } catch (e) {
+            outputContent.textContent = 'Error de conexion: ' + e.message;
+            outputContent.className = 'output-panel-content error';
+        }
+
+        btn.disabled = false;
+        btn.innerHTML = '<span class="btn-icon">&#9654;</span> Ejecutar';
+    }
+
+    function limpiar(id) {
+        document.getElementById('editor-' + id).value = '';
+        document.getElementById('output-' + id).style.display = 'none';
+    }
+
+    // Tab en el textarea inserta una tabulacion
+    document.querySelectorAll('.code-editor').forEach(editor => {
+        editor.addEventListener('keydown', function(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const start = this.selectionStart;
+                const end = this.selectionEnd;
+                this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
+                this.selectionStart = this.selectionEnd = start + 4;
+            }
+            // Ctrl+Enter para ejecutar
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                const block = this.closest('.editor-block');
+                const id = block.id.replace('editor-block-', '');
+                ejecutarCodigo(id);
+            }
+        });
+    });
+    </script>
+    <?php endif; ?>
 </body>
 </html>
