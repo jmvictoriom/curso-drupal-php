@@ -25,12 +25,12 @@ $color = $colores[$tipo] ?? $colores['teoria'];
 
 $es_ejercicio = ($tipo === 'ejercicio');
 $es_solucion = ($tipo === 'solucion');
+$es_teoria = ($tipo === 'teoria');
 
-if ($es_ejercicio) {
+if ($es_ejercicio || $es_teoria) {
     $source = file_get_contents($archivo);
     $source = preg_replace('/^<\?php\s*/', '', $source);
 } elseif ($es_solucion) {
-    // Solucion: leer codigo fuente Y ejecutar
     $source_raw = file_get_contents($archivo);
     $source_clean = preg_replace('/^<\?php\s*/', '', $source_raw);
     ob_start();
@@ -132,6 +132,147 @@ function parseExerciseSource(string $source): string {
         }
     }
 
+    return $html;
+}
+
+/**
+ * Parsea el codigo fuente de una teoria en contenido formateado.
+ */
+function parseTheorySource(string $source): string {
+    $lines = explode("\n", $source);
+    $html = '';
+    $in_block_comment = false;
+    $code_buffer = [];
+    $skip_docblock = true;
+
+    $flushCode = function() use (&$code_buffer, &$html) {
+        if (empty($code_buffer)) return;
+        $code = implode("\n", $code_buffer);
+        $escaped = htmlspecialchars($code);
+        // Syntax highlighting basico
+        $escaped = preg_replace('/(\$[a-zA-Z_]\w*)/', '<span class="th-var">$1</span>', $escaped);
+        $escaped = preg_replace('/(&quot;[^&]*&quot;|&#039;[^&]*&#039;)/', '<span class="th-str">$1</span>', $escaped);
+        $keywords = ['echo', 'return', 'function', 'class', 'new', 'if', 'else', 'elseif', 'for', 'foreach', 'while', 'switch', 'case', 'break', 'continue', 'match', 'fn', 'use', 'as', 'true', 'false', 'null', 'array', 'int', 'float', 'string', 'bool', 'void', 'public', 'private', 'protected', 'static', 'abstract', 'interface', 'extends', 'implements', 'namespace', 'readonly', 'trait'];
+        foreach ($keywords as $kw) {
+            $escaped = preg_replace('/\b(' . $kw . ')\b/', '<span class="th-kw">$1</span>', $escaped);
+        }
+        $html .= '<div class="th-code-block"><pre>' . $escaped . '</pre></div>';
+        $code_buffer = [];
+    };
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+
+        // Docblock del inicio -> skip
+        if ($skip_docblock) {
+            if (str_starts_with($trimmed, '/**') || str_starts_with($trimmed, '/*')) {
+                $in_block_comment = true;
+                continue;
+            }
+            if ($in_block_comment) {
+                if (str_contains($trimmed, '*/')) {
+                    $in_block_comment = false;
+                    $skip_docblock = false;
+                }
+                continue;
+            }
+            if (empty($trimmed)) continue;
+            $skip_docblock = false;
+        }
+
+        // Linea vacia
+        if (empty($trimmed)) {
+            if (!empty($code_buffer)) {
+                $code_buffer[] = '';
+            } else {
+                $html .= '<div class="th-spacer"></div>';
+            }
+            continue;
+        }
+
+        // Separador visual -------
+        if (preg_match('/^\/\/\s*-{5,}/', $trimmed)) {
+            $flushCode();
+            continue;
+        }
+
+        // Seccion principal: // === TITULO ===
+        if (preg_match('/^echo\s+["\']===\s*(.+?)\s*===["\']/', $trimmed, $m)) {
+            $flushCode();
+            $html .= '<div class="th-section">' . htmlspecialchars(trim($m[1])) . '</div>';
+            continue;
+        }
+
+        // Subseccion: // --- titulo ---
+        if (preg_match('/^echo\s+["\']---\s*(.+?)\s*---["\']/', $trimmed, $m)) {
+            $flushCode();
+            $html .= '<div class="th-subsection">' . htmlspecialchars(trim($m[1])) . '</div>';
+            continue;
+        }
+
+        // Seccion en comentario
+        if (preg_match('/^\/\/\s*===\s*(.+?)\s*===/', $trimmed, $m)) {
+            $flushCode();
+            $html .= '<div class="th-section">' . htmlspecialchars(trim($m[1])) . '</div>';
+            continue;
+        }
+
+        // Subseccion en comentario --- Titulo ---
+        if (preg_match('/^\/\/\s*---\s*(.+?)\s*---/', $trimmed, $m)) {
+            $flushCode();
+            $html .= '<div class="th-subsection">' . htmlspecialchars(trim($m[1])) . '</div>';
+            continue;
+        }
+
+        // Numero de seccion seguido de titulo
+        if (preg_match('/^\/\/\s*(\d+\.)\s+(.+)/', $trimmed, $m)) {
+            $flushCode();
+            $html .= '<div class="th-subsection">' . htmlspecialchars($m[1] . ' ' . $m[2]) . '</div>';
+            continue;
+        }
+
+        // Comentario explicativo (la teoria principal)
+        if (preg_match('/^\/\/\s?(.*)$/', $trimmed, $m)) {
+            $flushCode();
+            $text = $m[1];
+            if (empty(trim($text))) {
+                $html .= '<div class="th-spacer"></div>';
+            } elseif (preg_match('/^(Reglas|Importante|Nota|Ejemplo|Pista|Cuidado|Truco)/i', trim($text))) {
+                $html .= '<div class="th-callout">' . htmlspecialchars($text) . '</div>';
+            } else {
+                $html .= '<div class="th-text">' . htmlspecialchars($text) . '</div>';
+            }
+            continue;
+        }
+
+        // Bloque heredoc o texto largo con echo -> skip echo wrapper, mostrar contenido
+        if (preg_match('/^echo\s+PHP_EOL/', $trimmed) || $trimmed === 'echo PHP_EOL;') {
+            continue;
+        }
+
+        // echo simple con solo un salto de linea
+        if ($trimmed === 'echo PHP_EOL;' || preg_match('/^echo\s+["\']["\']/', $trimmed)) {
+            continue;
+        }
+
+        // echo con texto informativo -> mostrar como texto
+        if (preg_match('/^echo\s+["\'](.+?)["\'](\s*\.\s*PHP_EOL\s*)?;?\s*$/', $trimmed, $m)) {
+            $text = $m[1];
+            // Limpiar escapes
+            $text = str_replace(['\\$', '\\"', "\\'", "\\n", "\\t"], ['$', '"', "'", "\n", "\t"], $text);
+            if (empty(trim($text)) || preg_match('/^=+$/', trim($text)) || preg_match('/^-+$/', trim($text))) {
+                continue;
+            }
+            $flushCode();
+            $html .= '<div class="th-output">' . htmlspecialchars($text) . '</div>';
+            continue;
+        }
+
+        // Todo lo demas es codigo PHP
+        $code_buffer[] = $line;
+    }
+
+    $flushCode();
     return $html;
 }
 
@@ -259,6 +400,51 @@ function parseOutput(string $output): string {
         .section-title { display: block; font-weight: 700; font-size: 0.95rem; color: #111; margin-top: 1.25rem; margin-bottom: 0.25rem; padding-bottom: 0.4rem; border-bottom: 2px solid #e5e5e5; }
         .subsection { display: block; font-weight: 600; color: #2563eb; margin-top: 0.75rem; }
         .separator { display: block; height: 1px; background: #e5e5e5; margin: 0.5rem 0; }
+
+        /* Teoria */
+        .theory-content { padding: 2rem; }
+        .th-section {
+            font-size: 1.15rem; font-weight: 700; color: var(--text);
+            margin-top: 2.5rem; margin-bottom: 0.75rem;
+            padding-bottom: 0.5rem; border-bottom: 2px solid #e5e5e5;
+        }
+        .th-section:first-child { margin-top: 0; }
+        .th-subsection {
+            font-size: 0.95rem; font-weight: 700; color: #2563eb;
+            margin-top: 1.5rem; margin-bottom: 0.5rem;
+        }
+        .th-text {
+            font-size: 0.92rem; color: #374151; line-height: 1.8;
+            padding-left: 0;
+        }
+        .th-callout {
+            font-size: 0.9rem; color: #92400e;
+            background: #fffbeb; border-left: 3px solid #f59e0b;
+            padding: 0.5rem 0.85rem; border-radius: 0 6px 6px 0;
+            margin: 0.5rem 0;
+        }
+        .th-output {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem; color: #374151;
+            background: #f0fdf4; border-left: 3px solid #22c55e;
+            padding: 0.35rem 0.85rem; border-radius: 0 6px 6px 0;
+            margin: 0.25rem 0;
+        }
+        .th-code-block {
+            background: #1e293b; border-radius: 10px;
+            padding: 1rem 1.25rem; margin: 0.75rem 0;
+            overflow-x: auto;
+        }
+        .th-code-block pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.83rem; line-height: 1.75;
+            color: #e2e8f0; margin: 0;
+            white-space: pre-wrap; word-wrap: break-word;
+        }
+        .th-var { color: #7dd3fc; }
+        .th-str { color: #86efac; }
+        .th-kw { color: #c4b5fd; }
+        .th-spacer { height: 0.5rem; }
 
         /* Ejercicios */
         .exercise-content { padding: 1.5rem; }
@@ -458,7 +644,11 @@ function parseOutput(string $output): string {
                 <span><?= $es_ejercicio ? htmlspecialchars(basename($archivo)) : 'php ' . htmlspecialchars(basename($archivo)) ?></span>
             </div>
 
-            <?php if ($es_ejercicio): ?>
+            <?php if ($es_teoria): ?>
+                <div class="theory-content">
+                    <?= parseTheorySource($source) ?>
+                </div>
+            <?php elseif ($es_ejercicio): ?>
                 <div class="exercise-content">
                     <?= parseExerciseSource($source) ?>
                 </div>
