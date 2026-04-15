@@ -24,10 +24,18 @@ $colores = [
 $color = $colores[$tipo] ?? $colores['teoria'];
 
 $es_ejercicio = ($tipo === 'ejercicio');
+$es_solucion = ($tipo === 'solucion');
 
 if ($es_ejercicio) {
     $source = file_get_contents($archivo);
     $source = preg_replace('/^<\?php\s*/', '', $source);
+} elseif ($es_solucion) {
+    // Solucion: leer codigo fuente Y ejecutar
+    $source_raw = file_get_contents($archivo);
+    $source_clean = preg_replace('/^<\?php\s*/', '', $source_raw);
+    ob_start();
+    include $archivo;
+    $output = ob_get_clean();
 } else {
     ob_start();
     include $archivo;
@@ -122,6 +130,73 @@ function parseExerciseSource(string $source): string {
             $html .= '<div class="ex-code">' . htmlspecialchars($line) . '</div>';
             continue;
         }
+    }
+
+    return $html;
+}
+
+/**
+ * Parsea el codigo fuente de una solucion con syntax highlighting basico.
+ */
+function parseSolutionSource(string $source): string {
+    $lines = explode("\n", $source);
+    $html = '';
+    $in_block_comment = false;
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+
+        if (str_starts_with($trimmed, '/**') || str_starts_with($trimmed, '/*')) {
+            $in_block_comment = true;
+        }
+        if ($in_block_comment) {
+            if (str_contains($trimmed, '*/')) {
+                $in_block_comment = false;
+            }
+            $text = preg_replace('/^\s*\/?\*+\/?\s?/', '', $line);
+            $text = trim($text);
+            if (preg_match('/^=+$/', $text) || empty($text)) continue;
+            if (preg_match('/^(LECCION|SOLUCION|EJERCICIO)\s+\d+/', $text)) {
+                continue; // skip title in docblock
+            }
+            continue;
+        }
+
+        if (empty($trimmed)) {
+            $html .= "\n";
+            continue;
+        }
+
+        // Separador visual
+        if (preg_match('/^\/\/\s*-{5,}/', $trimmed)) {
+            continue;
+        }
+
+        // Titulo de ejercicio en comentario
+        if (preg_match('/^\/\/\s*(EJERCICIO\s+\d+.*)/i', $trimmed, $m)) {
+            $html .= '<span class="sol-title">' . htmlspecialchars(trim($m[1])) . '</span>' . "\n";
+            continue;
+        }
+
+        // Otro comentario
+        if (preg_match('/^\/\//', $trimmed)) {
+            $html .= '<span class="sol-comment">' . htmlspecialchars($line) . '</span>' . "\n";
+            continue;
+        }
+
+        // Codigo PHP: colorear basico
+        $escaped = htmlspecialchars($line);
+        // Strings
+        $escaped = preg_replace('/(&quot;[^&]*&quot;|&#039;[^&]*&#039;)/', '<span class="sol-string">$1</span>', $escaped);
+        // Variables
+        $escaped = preg_replace('/(\$[a-zA-Z_]\w*)/', '<span class="sol-var">$1</span>', $escaped);
+        // Keywords
+        $keywords = ['echo', 'return', 'function', 'class', 'new', 'if', 'else', 'elseif', 'for', 'foreach', 'while', 'switch', 'case', 'break', 'continue', 'match', 'fn', 'use', 'as', 'true', 'false', 'null', 'array', 'int', 'float', 'string', 'bool', 'void'];
+        foreach ($keywords as $kw) {
+            $escaped = preg_replace('/\b(' . $kw . ')\b/', '<span class="sol-keyword">$1</span>', $escaped);
+        }
+
+        $html .= $escaped . "\n";
     }
 
     return $html;
@@ -307,6 +382,46 @@ function parseOutput(string $output): string {
         .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
+        /* Solucion: codigo + consola */
+        .sol-section-label {
+            font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--text-secondary);
+            margin-bottom: 0.5rem; margin-top: 1.5rem;
+        }
+        .sol-section-label:first-child { margin-top: 0; }
+
+        .sol-code-card {
+            background: #1e293b; border-radius: var(--radius);
+            overflow: hidden; margin-bottom: 1rem;
+        }
+        .sol-code-bar {
+            background: #0f172a; padding: 0.5rem 1rem;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .sol-code-bar span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.72rem; color: #64748b; margin-left: 0.5rem;
+        }
+        .sol-code-body {
+            padding: 1.25rem; overflow-x: auto;
+        }
+        .sol-code-body pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.84rem; line-height: 1.75;
+            white-space: pre-wrap; word-wrap: break-word;
+            color: #e2e8f0; margin: 0;
+        }
+        .sol-title { display: block; font-weight: 700; color: #fbbf24; margin-top: 1rem; margin-bottom: 0.25rem; }
+        .sol-comment { color: #64748b; font-style: italic; }
+        .sol-var { color: #7dd3fc; }
+        .sol-string { color: #86efac; }
+        .sol-keyword { color: #c4b5fd; }
+
+        .sol-output-card {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); overflow: hidden;
+        }
+
         .nav-bottom { display: flex; justify-content: space-between; margin-top: 1.5rem; gap: 1rem; }
         .nav-bottom a { display: inline-flex; align-items: center; gap: 0.4rem; text-decoration: none; font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); transition: all 0.15s; }
         .nav-bottom a:hover { color: var(--text); border-color: #d4d4d4; }
@@ -346,6 +461,27 @@ function parseOutput(string $output): string {
             <?php if ($es_ejercicio): ?>
                 <div class="exercise-content">
                     <?= parseExerciseSource($source) ?>
+                </div>
+            <?php elseif ($es_solucion): ?>
+                <div style="padding: 1.5rem;">
+                    <div class="sol-section-label">Codigo fuente</div>
+                    <div class="sol-code-card">
+                        <div class="sol-code-bar">
+                            <div class="dot dot-red"></div>
+                            <div class="dot dot-yellow"></div>
+                            <div class="dot dot-green"></div>
+                            <span>solucion.php</span>
+                        </div>
+                        <div class="sol-code-body">
+                            <pre><?= parseSolutionSource($source_clean) ?></pre>
+                        </div>
+                    </div>
+
+                    <div class="sol-section-label">Salida por consola</div>
+                    <div class="sol-output-card">
+                        <div class="output-panel-bar">php solucion.php</div>
+                        <pre class="output-panel-content success"><?= htmlspecialchars($output) ?></pre>
+                    </div>
                 </div>
             <?php else: ?>
                 <div class="output-body">
