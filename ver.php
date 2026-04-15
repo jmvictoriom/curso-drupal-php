@@ -23,32 +23,116 @@ $colores = [
 ];
 $color = $colores[$tipo] ?? $colores['teoria'];
 
-// Capturar la salida del archivo PHP
-ob_start();
-include $archivo;
-$output = ob_get_clean();
+$es_ejercicio = ($tipo === 'ejercicio');
 
-// Parsear la salida para darle formato
-$lines = explode("\n", htmlspecialchars($output));
-$formatted = [];
-foreach ($lines as $line) {
-    // Titulos con ===
-    if (preg_match('/^===(.+)===$/', trim($line), $m)) {
-        $formatted[] = '<span class="section-title">' . trim($m[1]) . '</span>';
-    }
-    // Separadores ---
-    elseif (preg_match('/^-{3,}/', trim($line))) {
-        $formatted[] = '<span class="separator"></span>';
-    }
-    // Lineas con --- Ejercicio/Paso ---
-    elseif (preg_match('/^---(.+)---$/', trim($line), $m)) {
-        $formatted[] = '<span class="subsection">' . trim($m[1]) . '</span>';
-    }
-    else {
-        $formatted[] = $line;
-    }
+if ($es_ejercicio) {
+    // Para ejercicios: mostrar codigo fuente parseado como instrucciones
+    $source = file_get_contents($archivo);
+    // Quitar la etiqueta de apertura PHP
+    $source = preg_replace('/^<\?php\s*/', '', $source);
+} else {
+    // Para teoria y solucion: ejecutar y mostrar salida
+    ob_start();
+    include $archivo;
+    $output = ob_get_clean();
 }
-$output_html = implode("\n", $formatted);
+
+/**
+ * Parsea el codigo fuente de un ejercicio y lo convierte en HTML bonito.
+ */
+function parseExerciseSource(string $source): string {
+    $lines = explode("\n", $source);
+    $html = '';
+    $in_block_comment = false;
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+
+        // Bloque de comentario docblock
+        if (str_starts_with($trimmed, '/**') || str_starts_with($trimmed, '/*')) {
+            $in_block_comment = true;
+        }
+        if ($in_block_comment) {
+            if (str_contains($trimmed, '*/')) {
+                $in_block_comment = false;
+            }
+            // Extraer el texto del comentario de bloque
+            $text = preg_replace('/^\s*\/?\*+\/?\s?/', '', $line);
+            $text = trim($text);
+            if (preg_match('/^=+$/', $text) || empty($text)) continue;
+            if (preg_match('/^(LECCION|EJERCICIO)\s+\d+/', $text)) {
+                $html .= '<div class="ex-main-title">' . htmlspecialchars($text) . '</div>';
+            } elseif (!empty($text)) {
+                $html .= '<div class="ex-desc">' . htmlspecialchars($text) . '</div>';
+            }
+            continue;
+        }
+
+        // Linea vacia
+        if (empty($trimmed)) {
+            $html .= '<div class="ex-spacer"></div>';
+            continue;
+        }
+
+        // Separador visual -------
+        if (preg_match('/^\/\/\s*-{5,}/', $trimmed)) {
+            $html .= '<div class="ex-divider"></div>';
+            continue;
+        }
+
+        // Titulo de ejercicio: // EJERCICIO 1: ...
+        if (preg_match('/^\/\/\s*(EJERCICIO\s+\d+.*)/i', $trimmed, $m)) {
+            $html .= '<div class="ex-title">' . htmlspecialchars(trim($m[1])) . '</div>';
+            continue;
+        }
+
+        // Instruccion (comentario //)
+        if (preg_match('/^\/\/\s?(.*)$/', $trimmed, $m)) {
+            $text = $m[1];
+            // Resaltar pistas
+            if (preg_match('/^(Pista|Formato|Ejemplo|Nota|Muestra|Prueba|Operaciones)/i', trim($text))) {
+                $html .= '<div class="ex-hint">' . htmlspecialchars($text) . '</div>';
+            } else {
+                $html .= '<div class="ex-instruction">' . htmlspecialchars($text) . '</div>';
+            }
+            continue;
+        }
+
+        // TU CODIGO AQUI
+        if (str_contains($trimmed, 'TU CODIGO AQUI')) {
+            $html .= '<div class="ex-placeholder">// Escribe tu codigo aqui</div>';
+            continue;
+        }
+
+        // Codigo echo o PHP real (no es comentario)
+        if (!empty($trimmed)) {
+            $html .= '<div class="ex-code">' . htmlspecialchars($line) . '</div>';
+            continue;
+        }
+    }
+
+    return $html;
+}
+
+/**
+ * Parsea la salida de teoria/solucion para formatear secciones.
+ */
+function parseOutput(string $output): string {
+    $lines = explode("\n", htmlspecialchars($output));
+    $formatted = [];
+    foreach ($lines as $line) {
+        if (preg_match('/^===(.+)===$/', trim($line), $m)) {
+            $formatted[] = '<span class="section-title">' . trim($m[1]) . '</span>';
+        } elseif (preg_match('/^---(.+)---$/', trim($line), $m)) {
+            $formatted[] = '<span class="subsection">' . trim($m[1]) . '</span>';
+        } elseif (preg_match('/^-{3,}$/', trim($line))) {
+            $formatted[] = '<span class="separator"></span>';
+        } else {
+            $formatted[] = $line;
+        }
+    }
+    return implode("\n", $formatted);
+}
 
 ?>
 <!DOCTYPE html>
@@ -90,11 +174,7 @@ $output_html = implode("\n", $formatted);
             z-index: 10;
         }
 
-        .topbar-left {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
+        .topbar-left { display: flex; align-items: center; gap: 1rem; }
 
         .topbar a {
             color: var(--text-secondary);
@@ -105,12 +185,7 @@ $output_html = implode("\n", $formatted);
         }
 
         .topbar a:hover { color: var(--text); }
-
-        .topbar-title {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text);
-        }
+        .topbar-title { font-size: 0.85rem; font-weight: 600; color: var(--text); }
 
         .topbar-badge {
             font-size: 0.72rem;
@@ -120,28 +195,11 @@ $output_html = implode("\n", $formatted);
             letter-spacing: 0.02em;
         }
 
-        .content-wrap {
-            max-width: 800px;
-            margin: 2rem auto;
-            padding: 0 1.5rem 4rem;
-        }
+        .content-wrap { max-width: 800px; margin: 2rem auto; padding: 0 1.5rem 4rem; }
 
-        .lesson-header {
-            margin-bottom: 2rem;
-        }
-
-        .lesson-num {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.25rem;
-        }
-
-        .lesson-title {
-            font-size: 1.5rem;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-        }
+        .lesson-header { margin-bottom: 2rem; }
+        .lesson-num { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
+        .lesson-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 
         .output-card {
             background: var(--surface);
@@ -171,10 +229,7 @@ $output_html = implode("\n", $formatted);
             margin-left: 0.5rem;
         }
 
-        .output-body {
-            padding: 1.5rem;
-            overflow-x: auto;
-        }
+        .output-body { padding: 1.5rem; overflow-x: auto; }
 
         .output-body pre {
             font-family: 'JetBrains Mono', monospace;
@@ -186,28 +241,105 @@ $output_html = implode("\n", $formatted);
         }
 
         .section-title {
-            display: block;
+            display: block; font-weight: 700; font-size: 0.95rem; color: #111;
+            margin-top: 1.25rem; margin-bottom: 0.25rem;
+            padding-bottom: 0.4rem; border-bottom: 2px solid #e5e5e5;
+        }
+
+        .subsection { display: block; font-weight: 600; color: #2563eb; margin-top: 0.75rem; }
+        .separator { display: block; height: 1px; background: #e5e5e5; margin: 0.5rem 0; }
+
+        /* === Estilos para ejercicios === */
+        .exercise-content { padding: 1.5rem; }
+
+        .ex-main-title {
+            font-size: 1.1rem;
             font-weight: 700;
-            font-size: 0.95rem;
             color: #111;
-            margin-top: 1.25rem;
-            margin-bottom: 0.25rem;
-            padding-bottom: 0.4rem;
-            border-bottom: 2px solid #e5e5e5;
+            margin-bottom: 0.5rem;
         }
 
-        .subsection {
-            display: block;
-            font-weight: 600;
-            color: #2563eb;
-            margin-top: 0.75rem;
+        .ex-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.15rem;
         }
 
-        .separator {
-            display: block;
+        .ex-divider {
             height: 1px;
-            background: #e5e5e5;
-            margin: 0.5rem 0;
+            background: linear-gradient(to right, var(--border), transparent);
+            margin: 1.5rem 0 1rem;
+        }
+
+        .ex-title {
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+            font-weight: 700;
+            color: #16a34a;
+            margin-bottom: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: #f0fdf4;
+            border-left: 3px solid #16a34a;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .ex-instruction {
+            font-size: 0.9rem;
+            color: #374151;
+            line-height: 1.7;
+            padding-left: 0.75rem;
+        }
+
+        .ex-hint {
+            font-size: 0.85rem;
+            color: #7c3aed;
+            font-style: italic;
+            padding-left: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .ex-placeholder {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: #9ca3af;
+            background: #f9fafb;
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin: 0.75rem 0;
+            text-align: center;
+        }
+
+        .ex-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            color: #6b7280;
+            background: #f9fafb;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            margin: 0.1rem 0;
+        }
+
+        .ex-spacer { height: 0.4rem; }
+
+        .cli-tip {
+            margin-top: 1.5rem;
+            padding: 1rem 1.25rem;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: var(--radius);
+            font-size: 0.85rem;
+            color: #92400e;
+            line-height: 1.6;
+        }
+
+        .cli-tip strong { color: #78350f; }
+        .cli-tip code {
+            font-family: 'JetBrains Mono', monospace;
+            background: #fef3c7;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
         }
 
         .nav-bottom {
@@ -218,30 +350,20 @@ $output_html = implode("\n", $formatted);
         }
 
         .nav-bottom a {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            text-decoration: none;
-            font-size: 0.85rem;
-            font-weight: 500;
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            text-decoration: none; font-size: 0.85rem; font-weight: 500;
             color: var(--text-secondary);
-            padding: 0.6rem 1rem;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface);
-            transition: all 0.15s;
+            padding: 0.6rem 1rem; border: 1px solid var(--border);
+            border-radius: 8px; background: var(--surface); transition: all 0.15s;
         }
 
-        .nav-bottom a:hover {
-            color: var(--text);
-            border-color: #d4d4d4;
-        }
+        .nav-bottom a:hover { color: var(--text); border-color: #d4d4d4; }
 
         @media (max-width: 640px) {
             .topbar { padding: 0.75rem 1rem; }
             .content-wrap { padding: 0 1rem 3rem; }
             .lesson-title { font-size: 1.2rem; }
-            .output-body { padding: 1rem; }
+            .output-body, .exercise-content { padding: 1rem; }
             .output-body pre { font-size: 0.8rem; }
         }
     </style>
@@ -266,12 +388,28 @@ $output_html = implode("\n", $formatted);
                 <div class="dot dot-red"></div>
                 <div class="dot dot-yellow"></div>
                 <div class="dot dot-green"></div>
-                <span>php <?= htmlspecialchars(basename($archivo)) ?></span>
+                <span><?= $es_ejercicio ? htmlspecialchars(basename($archivo)) : 'php ' . htmlspecialchars(basename($archivo)) ?></span>
             </div>
-            <div class="output-body">
-                <pre><?= $output_html ?></pre>
-            </div>
+
+            <?php if ($es_ejercicio): ?>
+                <div class="exercise-content">
+                    <?= parseExerciseSource($source) ?>
+                </div>
+            <?php else: ?>
+                <div class="output-body">
+                    <pre><?= parseOutput($output) ?></pre>
+                </div>
+            <?php endif; ?>
         </div>
+
+        <?php if ($es_ejercicio): ?>
+            <div class="cli-tip">
+                <strong>Para hacer este ejercicio:</strong><br>
+                1. Abre el archivo en tu editor: <code><?= htmlspecialchars($archivo) ?></code><br>
+                2. Completa el codigo donde dice <code>// TU CODIGO AQUI</code><br>
+                3. Ejecuta: <code>php <?= htmlspecialchars($archivo) ?></code>
+            </div>
+        <?php endif; ?>
 
         <div class="nav-bottom">
             <?php
