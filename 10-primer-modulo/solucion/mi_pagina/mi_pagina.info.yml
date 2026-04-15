@@ -1,0 +1,5 @@
+name: Mi Pagina
+type: module
+description: 'Modulo de practica con varias paginas'
+core_version_requirement: ^10 || ^11
+package: Custom

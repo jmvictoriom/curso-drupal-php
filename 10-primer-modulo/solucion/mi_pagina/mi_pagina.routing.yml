@@ -1,0 +1,23 @@
+mi_pagina.principal:
+  path: '/mi-pagina'
+  defaults:
+    _controller: '\Drupal\mi_pagina\Controller\MiPaginaController::principal'
+    _title: 'Mi Pagina'
+  requirements:
+    _permission: 'access content'
+
+mi_pagina.saludo:
+  path: '/mi-pagina/saludo/{nombre}'
+  defaults:
+    _controller: '\Drupal\mi_pagina\Controller\MiPaginaController::saludo'
+    _title: 'Saludo'
+  requirements:
+    _permission: 'access content'
+
+mi_pagina.about:
+  path: '/mi-pagina/about'
+  defaults:
+    _controller: '\Drupal\mi_pagina\Controller\MiPaginaController::about'
+    _title: 'Sobre mi'
+  requirements:
+    _permission: 'access content'
