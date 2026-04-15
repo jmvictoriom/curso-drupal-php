@@ -84,23 +84,7 @@ function parseExerciseSource(string $source): string {
             continue;
         }
 
-        if (preg_match('/^\/\/\s*(EJERCICIO\s+\d+.*)/i', $trimmed, $m)) {
-            $html .= '<div class="ex-title">' . htmlspecialchars(trim($m[1])) . '</div>';
-            $context_lines = [];
-            continue;
-        }
-
-        if (preg_match('/^\/\/\s?(.*)$/', $trimmed, $m)) {
-            $text = $m[1];
-            if (preg_match('/^(Pista|Formato|Ejemplo|Nota|Muestra|Prueba|Operaciones)/i', trim($text))) {
-                $html .= '<div class="ex-hint">' . htmlspecialchars($text) . '</div>';
-            } else {
-                $html .= '<div class="ex-instruction">' . htmlspecialchars($text) . '</div>';
-            }
-            continue;
-        }
-
-        // TU CODIGO AQUI -> editor interactivo
+        // TU CODIGO AQUI -> editor interactivo (ANTES del check de comentarios)
         if (str_contains($trimmed, 'TU CODIGO AQUI')) {
             $editor_id++;
             $ctx = !empty($context_lines) ? htmlspecialchars(implode("\n", $context_lines)) : '';
@@ -121,6 +105,24 @@ function parseExerciseSource(string $source): string {
             $html .= '</div>';
             $html .= '</div>';
             $context_lines = [];
+            continue;
+        }
+
+        // Titulo de ejercicio: // EJERCICIO 1: ...
+        if (preg_match('/^\/\/\s*(EJERCICIO\s+\d+.*)/i', $trimmed, $m)) {
+            $html .= '<div class="ex-title">' . htmlspecialchars(trim($m[1])) . '</div>';
+            $context_lines = [];
+            continue;
+        }
+
+        // Instruccion (comentario //)
+        if (preg_match('/^\/\/\s?(.*)$/', $trimmed, $m)) {
+            $text = $m[1];
+            if (preg_match('/^(Pista|Formato|Ejemplo|Nota|Muestra|Prueba|Operaciones)/i', trim($text))) {
+                $html .= '<div class="ex-hint">' . htmlspecialchars($text) . '</div>';
+            } else {
+                $html .= '<div class="ex-instruction">' . htmlspecialchars($text) . '</div>';
+            }
             continue;
         }
 
